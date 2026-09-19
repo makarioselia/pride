@@ -1,0 +1,62 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isOwner(weddingData) {
+      return isSignedIn() && weddingData.ownerUid == request.auth.uid;
+    }
+
+    match /weddings/{weddingId} {
+      // Anyone can read a wedding document ONLY if it is published.
+      // The owner can always read their own (published or not).
+      allow read: if resource.data.published == true
+                  || isOwner(resource.data);
+
+      // Only an authenticated user creating a wedding for themself.
+      allow create: if isSignedIn()
+                    && request.resource.data.ownerUid == request.auth.uid;
+
+      // Only the owner can update or delete their wedding.
+      allow update, delete: if isOwner(resource.data);
+
+      match /events/{eventId} {
+        allow read: if get(/databases/$(database)/documents/weddings/$(weddingId)).data.published == true
+                    || isOwner(get(/databases/$(database)/documents/weddings/$(weddingId)).data);
+        allow write: if isOwner(get(/databases/$(database)/documents/weddings/$(weddingId)).data);
+      }
+
+      match /gallery/{imageId} {
+        allow read: if get(/databases/$(database)/documents/weddings/$(weddingId)).data.published == true
+                    || isOwner(get(/databases/$(database)/documents/weddings/$(weddingId)).data);
+        allow write: if isOwner(get(/databases/$(database)/documents/weddings/$(weddingId)).data);
+      }
+
+      match /messages/{messageId} {
+        // Public can read only approved messages; the owner can read all.
+        allow read: if (resource.data.status == 'approved'
+                        && get(/databases/$(database)/documents/weddings/$(weddingId)).data.published == true)
+                    || isOwner(get(/databases/$(database)/documents/weddings/$(weddingId)).data);
+
+        // Public (including anonymous) visitors can submit a message on a
+        // published wedding, but only as a new, pending message — they can
+        // never set their own status or forge another status.
+        allow create: if get(/databases/$(database)/documents/weddings/$(weddingId)).data.published == true
+                      && request.resource.data.status == 'pending'
+                      && request.resource.data.name is string
+                      && request.resource.data.message is string
+                      && request.resource.data.name.size() > 0
+                      && request.resource.data.message.size() > 0
+                      && request.resource.data.message.size() < 2000;
+
+        // Public users can never update or delete messages — only the owner can
+        // (to approve/reject/delete).
+        allow update, delete: if isOwner(get(/databases/$(database)/documents/weddings/$(weddingId)).data);
+      }
+    }
+  }
+}
